@@ -6,24 +6,28 @@ import numpy as np
 def compute_and_clean_sus(df):
     """
     Compute SUS scores, clean neutral responses, and show stats before/after cleaning.
+    Expects df to have exactly 10 SUS question columns.
     """
     # Ensure correct format
     if df.shape[1] != 10:
-        raise ValueError("Data must have exactly 10 columns (one per SUS question).")
+        raise ValueError(
+            f"Data must have exactly 10 columns (one per SUS question). "
+            f"Got {df.shape[1]} columns: {list(df.columns)}"
+        )
 
-    # Copy original data for comparison
-    original_df = df.copy()
+    # Work on a copy so caller's df isn't mutated
+    df = df.copy()
 
     # STEP 1 — Detect lazy responses (same value across all 10 questions)
     lazy_mask = df.nunique(axis=1) == 1
-    lazy_responses = df[lazy_mask]
-    cleaned_df = df[~lazy_mask]
+    lazy_responses = df[lazy_mask].copy()
+    cleaned_df = df[~lazy_mask].copy()
 
-    # STEP 2 — Apply SUS scoring adjustments
     positive_items = [1, 3, 5, 7, 9]
     negative_items = [2, 4, 6, 8, 10]
-    adjusted = cleaned_df.copy()
 
+    # STEP 2 — Apply SUS scoring adjustments
+    adjusted = cleaned_df.copy()
     for i in positive_items:
         adjusted.iloc[:, i - 1] = cleaned_df.iloc[:, i - 1] - 1
     for i in negative_items:
@@ -32,7 +36,7 @@ def compute_and_clean_sus(df):
     # STEP 3 — Compute SUS score per respondent
     cleaned_df['SUS_Score'] = adjusted.sum(axis=1) * 2.5
 
-    # STEP 4 — Compute statistics for both datasets
+    # STEP 4 — Statistics helper
     def summarize_sus(df_subset, label):
         mean_sus = df_subset['SUS_Score'].mean()
         std_sus = df_subset['SUS_Score'].std()
@@ -48,12 +52,11 @@ def compute_and_clean_sus(df):
         print(f"Error %               : {error_percent:.2f}%")
         return mean_sus, error_percent
 
-    # Compute stats
     print("===== SYSTEM USABILITY SCALE (SUS) ANALYSIS =====")
-    print(f"Total responses loaded : {len(original_df)}")
+    print(f"Total responses loaded : {len(df)}")
     print(f"Neutral (uniform) responses removed : {len(lazy_responses)}")
 
-    # Compute lazy group SUS (for comparison)
+    # Lazy group SUS (for comparison)
     if len(lazy_responses) > 0:
         lazy_adj = lazy_responses.copy()
         for i in positive_items:
@@ -79,7 +82,16 @@ def compute_and_clean_sus(df):
 # -----------------------------
 uploaded = files.upload()
 csv_file = list(uploaded.keys())[0]
-df = pd.read_csv(StringIO(uploaded[csv_file].decode('utf-8')), header=None)
+
+# Retrofit: read WITH header so Q1..Q10 become column names
+df = pd.read_csv(StringIO(uploaded[csv_file].decode('utf-8')))
+
+# Drop an unnamed leading index column if present (the 0–9 row label)
+df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+
+# Keep only the 10 SUS columns (defensive, in case of extra metadata)
+sus_cols = [f"Q{i}" for i in range(1, 11)]
+df = df[sus_cols]
 
 # Run analysis
 cleaned, lazy = compute_and_clean_sus(df)
